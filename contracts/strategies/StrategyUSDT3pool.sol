@@ -15,6 +15,8 @@ interface yvERC20 {
 
     function earn() external;
 
+    // https://docs.yearn.finance/developers/yvaults-documentation/vault-interfaces#function-getpriceperfullshare
+    // LP token price in native token 
     function getPricePerFullShare() external view returns (uint256);
 }
 
@@ -75,17 +77,17 @@ contract StrategyUSDT3pool {
     function deposit() public isAuthorized {
         rebalance();
         uint256 _want = (IERC20(want).balanceOf(address(this))).sub(tank);
-        if (_want > 0) { //如果tank=balance（tank大于0）则不需要再deposit资金了
+        if (_want > 0) { //if tank=balance（tank>0）no need to deposit more money
             IERC20(want).safeApprove(_3pool, 0);
             IERC20(want).safeApprove(_3pool, _want);
             uint256 v = _want.mul(1e30).div(ICurveFi(_3pool).get_virtual_price());
             ICurveFi(_3pool).add_liquidity([0, 0, _want], v.mul(DENOMINATOR.sub(slip)).div(DENOMINATOR)); // USDT存入3pool
         }
-        uint256 _bal = IERC20(_3crv).balanceOf(address(this)); //上一步deposit产生的新3crv 可以存到yvault里面 
+        uint256 _bal = IERC20(_3crv).balanceOf(address(this)); //previous deposit creates 3crv, which can be deposited in yvault
         if (_bal > 0) {
             IERC20(_3crv).safeApprove(y3crv, 0);
             IERC20(_3crv).safeApprove(y3crv, _bal); 
-            yvERC20(y3crv).deposit(_bal); //// 3crv存入 yvault (获得 y3crv)
+            yvERC20(y3crv).deposit(_bal); //// 3crv deposit in yvault (get y3crv)
         }
     }
 
@@ -105,24 +107,24 @@ contract StrategyUSDT3pool {
 
         rebalance();
         uint256 _balance = IERC20(want).balanceOf(address(this));
-        if (_balance < _amount) { //本策略合约USDT余额小于要求的提款额
-            _amount = _withdrawSome(_amount.sub(_balance)); //不够的部分从池子里面提取到本策略合约
+        if (_balance < _amount) { //strategy contract'USDT balance < required withdraw amount 
+            _amount = _withdrawSome(_amount.sub(_balance)); //withdraw some from pool to strategy 
             _amount = _amount.add(_balance);
-            tank = 0; //策略余额部分全部提取完毕 
-        } else { //策略合约余额足够
-            if (tank >= _amount) tank = tank.sub(_amount); //从tank中提取 
+            tank = 0; //strategy balance is empty after withdraw
+        } else { //strategy balance is enough 
+            if (tank >= _amount) tank = tank.sub(_amount); //widthdraw from tank 
             else tank = 0;
         }
 
         address _vault = IController(controller).vaults(address(want));
         require(_vault != address(0), "!vault"); // additional protection so we don't burn the funds
         uint256 _fee = _amount.mul(withdrawalFee).div(DENOMINATOR);
-        //从策略合约转出给controller的 reward/fee vault 
+        //from strategy to controller's reward/fee vault 
         IERC20(want).safeTransfer(IController(controller).rewards(), _fee);
         IERC20(want).safeTransfer(_vault, _amount.sub(_fee));
     }
 
-    //作用于y3CRV，提取到本策略合约
+    //apply to y3CRV，withdraw to strategy 
     function _withdrawSome(uint256 _amount) internal returns (uint256) {
         // 输入 _amount 是 USDT数量
         uint256 _amnt = _amount.mul(1e30).div(ICurveFi(_3pool).get_virtual_price()); // 3CRV数量
@@ -133,17 +135,17 @@ contract StrategyUSDT3pool {
         return _withdrawOne(_after.sub(_before)); //从3pool 提取USDT 
     }
 
-    // 作用于3pool，提取到本策略合约
+    // apply to 3pool，withdraw to strategy 
     function _withdrawOne(uint256 _amnt) internal returns (uint256) {
-        // 输入 _amnt 是3CRV数量 
+        // input _amnt is 3CRV amount
         uint256 _before = IERC20(want).balanceOf(address(this));
         IERC20(_3crv).safeApprove(_3pool, 0);
         IERC20(_3crv).safeApprove(_3pool, _amnt);
-        // 提取 3CRV， 获得USDT 
+        // withdraw 3CRV， get USDT 
         ICurveFi(_3pool).remove_liquidity_one_coin(_amnt, 2, _amnt.mul(DENOMINATOR.sub(slip)).div(DENOMINATOR).div(1e12));
         uint256 _after = IERC20(want).balanceOf(address(this));
 
-        return _after.sub(_before); // USDT增加的数量
+        return _after.sub(_before); // USDT increased amount 
     }
 
     // Withdraw all funds, normally used when migrating strategies
@@ -195,22 +197,25 @@ contract StrategyUSDT3pool {
     }
 
     function migrate(address _strategy) external {
+        // only governance can call this
         require(msg.sender == governance, "!governance");
+        // new strategy must be approved
         require(IController(controller).approvedStrategies(want, _strategy), "!stategyAllowed");
+        // transfer all assets(USDT,3crv, y3crv) to new strategy
         IERC20(y3crv).safeTransfer(_strategy, IERC20(y3crv).balanceOf(address(this)));
         IERC20(_3crv).safeTransfer(_strategy, IERC20(_3crv).balanceOf(address(this)));
         IERC20(want).safeTransfer(_strategy, IERC20(want).balanceOf(address(this)));
     }
 
     function forceD(uint256 _amount) external isAuthorized {
-        //强制deposit， 输入_amount是USDT数量 
+        //force deposit， input _amount is USDT amount
         IERC20(want).safeApprove(_3pool, 0);
         IERC20(want).safeApprove(_3pool, _amount);
-        uint256 v = _amount.mul(1e30).div(ICurveFi(_3pool).get_virtual_price()); //3crv数量 
-        ICurveFi(_3pool).add_liquidity([0, 0, _amount], v.mul(DENOMINATOR.sub(slip)).div(DENOMINATOR)); //添加USDT到3pool 
-        if (_amount < tank) tank = tank.sub(_amount); //更新tank
+        uint256 v = _amount.mul(1e30).div(ICurveFi(_3pool).get_virtual_price()); //3crv amount
+        ICurveFi(_3pool).add_liquidity([0, 0, _amount], v.mul(DENOMINATOR.sub(slip)).div(DENOMINATOR)); //add USDT to 3pool 
+        if (_amount < tank) tank = tank.sub(_amount); //update tank
         else tank = 0;
-        //添加 3crv 到 yvault 
+        //add 3crv to yvault 
         uint256 _bal = IERC20(_3crv).balanceOf(address(this)); 
         IERC20(_3crv).safeApprove(y3crv, 0);
         IERC20(_3crv).safeApprove(y3crv, _bal);
@@ -218,26 +223,26 @@ contract StrategyUSDT3pool {
     }
 
     function forceW(uint256 _amt) external isAuthorized {
-        // 强制提取， 输入_amt是y3crv数量 
+        // force withdraw, input _amt is y3crv amount
         uint256 _before = IERC20(_3crv).balanceOf(address(this));
         yvERC20(y3crv).withdraw(_amt);
         uint256 _after = IERC20(_3crv).balanceOf(address(this));
-        _amt = _after.sub(_before); // y3crv被销毁，3crv被返还到策略合约（数量增加）
+        _amt = _after.sub(_before); // y3crv decrease，3crv returned to strategy（amount increase）
 
         IERC20(_3crv).safeApprove(_3pool, 0);
         IERC20(_3crv).safeApprove(_3pool, _amt); 
         _before = IERC20(want).balanceOf(address(this)); 
-        // 从3pool 提取USDT，销毁3crv 
+        // from 3pool withdraw USDT，decrease 3crv 
         ICurveFi(_3pool).remove_liquidity_one_coin(_amt, 2, _amt.mul(DENOMINATOR.sub(slip)).div(DENOMINATOR).div(1e12));
-        _after = IERC20(want).balanceOf(address(this)); //策略合约USDT增加
-        tank = tank.add(_after.sub(_before)); //更新tank 
+        _after = IERC20(want).balanceOf(address(this)); //strategy USDT increase 
+        tank = tank.add(_after.sub(_before)); //update tank 
     }
 
     function drip() public isAuthorized {
-         // 每次rebalance都先把 y3crv reward 分给 strategist 和 vault
+         // every rebalance will distribute y3crv reward to strategist/vault
         uint256 _p = yvERC20(y3crv).getPricePerFullShare();
         _p = _p.mul(ICurveFi(_3pool).get_virtual_price()).div(1e18);
-        require(_p >= p, "backward"); // 保证净值是在增长的才有reward发出
+        require(_p >= p, "backward"); // make sure LP value increased before reward send out 
         uint256 _r = (_p.sub(p)).mul(balanceOfy3CRV()).div(1e18);
         uint256 _s = _r.mul(strategistReward).div(DENOMINATOR);
         IERC20(y3crv).safeTransfer(strategist, _s.mul(1e18).div(_p));
@@ -247,16 +252,16 @@ contract StrategyUSDT3pool {
     }
 
     function tick() public view returns (uint256 _t, uint256 _c) {
-        _t = ICurveFi(_3pool).balances(2).mul(threshold).div(DENOMINATOR);// 3pool中USDT数量的60%
-        _c = balanceOfy3CRVinWant(); // 策略地址中剩余y3crv对应的USDT数量
+        _t = ICurveFi(_3pool).balances(2).mul(threshold).div(DENOMINATOR);// 60% of USDT in 3Pool
+        _c = balanceOfy3CRVinWant(); // strategy's y3crv value in USDT
     }
 
     function rebalance() public isAuthorized {
         drip();  
         (uint256 _t, uint256 _c) = tick();
-        if (_c > _t) { //本策略已存入USDT（y3crv代表）大于3pool中USDT总量的60%
-            _withdrawSome(_c.sub(_t));  //从3pool中提取出一些到本策略合约 （保证一个策略占总资金不超过60%）
-            tank = IERC20(want).balanceOf(address(this)); //超过池子资金60%的部分放到tank
+        if (_c > _t) { //strategy'deposited USDT（y3crv represented）> 60% of USDT in 3Pool
+            _withdrawSome(_c.sub(_t));  //withdraw some USDT from 3Pool to strategy
+            tank = IERC20(want).balanceOf(address(this)); //the >60% part is moved to tank
             emit Threshold(address(this));
         }
     }

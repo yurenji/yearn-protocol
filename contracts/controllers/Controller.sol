@@ -33,7 +33,7 @@ contract Controller {
     constructor(address _rewards) public {
         governance = msg.sender;
         strategist = msg.sender;
-        onesplit = address(0x50FDA034C0Ce7a8f7EFDAebDA7Aa7cA21CC1267e);
+        onesplit = address(0x50FDA034C0Ce7a8f7EFDAebDA7Aa7cA21CC1267e); //onesplit audit 
         rewards = _rewards;
     }
 
@@ -75,7 +75,7 @@ contract Controller {
 
     function revokeStrategy(address _token, address _strategy) public {
         require(msg.sender == governance, "!governance");
-        approvedStrategies[_token][_strategy] = false;
+        approvedStrategies[_token][_strategy] = false; // set approve to false 
     }
 
     function setConverter(
@@ -91,7 +91,7 @@ contract Controller {
         require(msg.sender == strategist || msg.sender == governance, "!strategist");
         require(approvedStrategies[_token][_strategy] == true, "!approved");
 
-        address _current = strategies[_token];
+        address _current = strategies[_token];   
         if (_current != address(0)) {
             IStrategy(_current).withdrawAll();
         }
@@ -99,20 +99,25 @@ contract Controller {
     }
 
     function earn(address _token, uint256 _amount) public {
+        // deposit from controller to strategy (convert token if needed)
         address _strategy = strategies[_token];
         address _want = IStrategy(_strategy).want();
         if (_want != _token) {
+            // if strategy.want doesn't match token, need convert
             address converter = converters[_token][_want];
             IERC20(_token).safeTransfer(converter, _amount);
             _amount = IConverter(converter).convert(_strategy);
             IERC20(_want).safeTransfer(_strategy, _amount);
         } else {
+            //transfer _amount of _token from controller to strategy 
             IERC20(_token).safeTransfer(_strategy, _amount);
         }
+        //strategy deposit into its pool(s) after transfer 
         IStrategy(_strategy).deposit();
     }
 
     function balanceOf(address _token) external view returns (uint256) {
+        // balance of strategy's token 
         return IStrategy(strategies[_token]).balanceOf();
     }
 
@@ -123,11 +128,13 @@ contract Controller {
 
     function inCaseTokensGetStuck(address _token, uint256 _amount) public {
         require(msg.sender == strategist || msg.sender == governance, "!governance");
+        // token from controller to strategist/governance
         IERC20(_token).safeTransfer(msg.sender, _amount);
     }
 
     function inCaseStrategyTokenGetStuck(address _strategy, address _token) public {
         require(msg.sender == strategist || msg.sender == governance, "!governance");
+        // strategy token from strategy to controller 
         IStrategy(_strategy).withdraw(_token);
     }
 
@@ -138,6 +145,7 @@ contract Controller {
     ) public view returns (uint256 expected) {
         uint256 _balance = IERC20(_token).balanceOf(_strategy);
         address _want = IStrategy(_strategy).want();
+        // call 1inch getExpectedReturn
         (expected, ) = IOneSplitAudit(onesplit).getExpectedReturn(_token, _want, _balance, parts, 0);
     }
 
@@ -150,7 +158,7 @@ contract Controller {
         require(msg.sender == strategist || msg.sender == governance, "!governance");
         // This contract should never have value in it, but just incase since this is a public call
         uint256 _before = IERC20(_token).balanceOf(address(this));
-        IStrategy(_strategy).withdraw(_token);
+        IStrategy(_strategy).withdraw(_token); // _amount of _token from strategy to controller 
         uint256 _after = IERC20(_token).balanceOf(address(this));
         if (_after > _before) {
             uint256 _amount = _after.sub(_before);
@@ -161,18 +169,20 @@ contract Controller {
             IERC20(_token).safeApprove(onesplit, 0);
             IERC20(_token).safeApprove(onesplit, _amount);
             (_expected, _distribution) = IOneSplitAudit(onesplit).getExpectedReturn(_token, _want, _amount, parts, 0);
+            // swap _token of _token to _want
             IOneSplitAudit(onesplit).swap(_token, _want, _amount, _expected, _distribution, 0);
             _after = IERC20(_want).balanceOf(address(this));
-            if (_after > _before) {
+            if (_after > _before) {// swap success 
                 _amount = _after.sub(_before);
-                uint256 _reward = _amount.mul(split).div(max);
-                earn(_want, _amount.sub(_reward));
-                IERC20(_want).safeTransfer(rewards, _reward);
+                uint256 _reward = _amount.mul(split).div(max); // 500/10000 reward 
+                earn(_want, _amount.sub(_reward)); 
+                IERC20(_want).safeTransfer(rewards, _reward); // transfer 5/100 reward 
             }
         }
     }
 
     function withdraw(address _token, uint256 _amount) public {
+        // call strategy withdraw
         require(msg.sender == vaults[_token], "!vault");
         IStrategy(strategies[_token]).withdraw(_amount);
     }
