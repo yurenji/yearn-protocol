@@ -126,13 +126,13 @@ contract StrategyUSDT3pool {
 
     //apply to y3CRV，withdraw to strategy 
     function _withdrawSome(uint256 _amount) internal returns (uint256) {
-        // 输入 _amount 是 USDT数量
-        uint256 _amnt = _amount.mul(1e30).div(ICurveFi(_3pool).get_virtual_price()); // 3CRV数量
-        uint256 _amt = _amnt.mul(1e18).div(yvERC20(y3crv).getPricePerFullShare()); // y3CRV数量
+        // input _amount is USDT amount
+        uint256 _amnt = _amount.mul(1e30).div(ICurveFi(_3pool).get_virtual_price()); // 3CRV amount 
+        uint256 _amt = _amnt.mul(1e18).div(yvERC20(y3crv).getPricePerFullShare()); // y3CRV amount
         uint256 _before = IERC20(_3crv).balanceOf(address(this));
-        yvERC20(y3crv).withdraw(_amt); // 提取y3CRV 
+        yvERC20(y3crv).withdraw(_amt); // withdraw y3CRV 
         uint256 _after = IERC20(_3crv).balanceOf(address(this));
-        return _withdrawOne(_after.sub(_before)); //从3pool 提取USDT 
+        return _withdrawOne(_after.sub(_before)); //withdraw USDT from 3Pool
     }
 
     // apply to 3pool，withdraw to strategy 
